@@ -294,18 +294,32 @@ app.get('/daily-energy', async (req, res) => {
       .lean();
 
     // normalize to series of { timestamp, value }
-    const toValue = (doc) => {
+    const toTotalValue = (doc) => {
       if (!doc) return null;
-      const v = docPower(doc);
+      const v = (doc.active_power_total !== undefined && doc.active_power_total !== null) ? doc.active_power_total : docPower(doc);
       return v === 0 ? null : v;
     };
 
-    const points = docsRaw.map(d => ({ timestamp: d.timestamp, value: toValue(d) }));
+    const getPhase = (doc, phase) => {
+      if (!doc) return null;
+      const v = (doc[`active_power_${phase}`] !== undefined && doc[`active_power_${phase}`] !== null)
+                ? doc[`active_power_${phase}`]
+                : (doc[`active_power_phase_${phase}`] !== undefined ? doc[`active_power_phase_${phase}`] : null);
+      return v === 0 ? null : v;
+    };
+
+    const pointsTotal = docsRaw.map(d => ({ timestamp: d.timestamp, value: toTotalValue(d) }));
+    const pointsA = docsRaw.map(d => ({ timestamp: d.timestamp, value: getPhase(d, 'a') }));
+    const pointsB = docsRaw.map(d => ({ timestamp: d.timestamp, value: getPhase(d, 'b') }));
+    const pointsC = docsRaw.map(d => ({ timestamp: d.timestamp, value: getPhase(d, 'c') }));
 
     res.json({
       date: queryDate,
       series: [
-        { label: 'pm_doc', points }
+        { label: 'pm_doc', points: pointsTotal },
+        { label: 'active_power_a', points: pointsA },
+        { label: 'active_power_b', points: pointsB },
+        { label: 'active_power_c', points: pointsC }
       ]
     });
   } catch (err) {
@@ -341,7 +355,10 @@ app.get('/daily-energy/:source', async (req, res) => {
 
     // Fields to return (use schema fields)
     const fields = [
-      '_id','voltage','current','active_power_total','mac_address','timestamp'
+      '_id','voltage','current','active_power_total',
+      'active_power_a','active_power_b','active_power_c',
+      'active_power_phase_a','active_power_phase_b','active_power_phase_c',
+      'mac_address','timestamp'
     ];
 
     const data = docs.map(d => {
@@ -350,6 +367,23 @@ app.get('/daily-energy/:source', async (req, res) => {
         if (d[f] !== undefined) out[f] = d[f];
         else out[f] = null;
       }
+
+      // Normalize phase fields: prefer active_power_a/b/c, fall back to active_power_phase_*
+      out.active_power_a = (d.active_power_a !== undefined && d.active_power_a !== null)
+        ? d.active_power_a
+        : (d.active_power_phase_a !== undefined ? d.active_power_phase_a : null);
+      out.active_power_b = (d.active_power_b !== undefined && d.active_power_b !== null)
+        ? d.active_power_b
+        : (d.active_power_phase_b !== undefined ? d.active_power_phase_b : null);
+      out.active_power_c = (d.active_power_c !== undefined && d.active_power_c !== null)
+        ? d.active_power_c
+        : (d.active_power_phase_c !== undefined ? d.active_power_phase_c : null);
+
+      // Remove duplicate phase_* keys from output
+      delete out.active_power_phase_a;
+      delete out.active_power_phase_b;
+      delete out.active_power_phase_c;
+
       // Present timestamp in Thailand local time (Asia/Bangkok) in ISO-like format
       if (d.timestamp) {
         const dateObj = new Date(d.timestamp);
@@ -1313,9 +1347,9 @@ app.get('/api/notifications/peak', async (req, res) => {
     const skip = (parseInt(page) - 1) * parseInt(limit);
 
     const notifications = await PeakNotification.find(query)
-      .sort({ timestamp: -1 })
-      .limit(parseInt(limit))
-      .skip(skip);
+      .sort({ timestamp: 1 })
+      .limit(limit)
+      .lean();
 
     const total = await PeakNotification.countDocuments(query);
     const unreadCount = await PeakNotification.countDocuments({ read: false });
@@ -1381,9 +1415,9 @@ app.get('/api/notifications/daily-diff', async (req, res) => {
     const skip = (parseInt(page) - 1) * parseInt(limit);
 
     const notifications = await DailyDiffNotification.find(query)
-      .sort({ timestamp: -1 })
-      .limit(parseInt(limit))
-      .skip(skip);
+                          .sort({ timestamp: 1 })
+                          .limit(limit)
+                          .lean();
 
     const total = await DailyDiffNotification.countDocuments(query);
     const unreadCount = await DailyDiffNotification.countDocuments({ read: false });
@@ -1918,7 +1952,7 @@ app.get('/daily-energy/:source', async (req, res) => {
     const docs = await Model.find({ timestamp: { $gte: start, $lte: end } })
       .sort({ timestamp: 1 })
       .limit(limit)
-      .select('voltage current active_power_total timestamp mac_address');
+      .select('voltage current active_power_a active_power_b active_power_c active_power_phase_a active_power_phase_b active_power_phase_c active_power_total timestamp mac_address');
 
     res.json({ message: 'Data retrieved successfully', data: docs });
   } catch (err) {
@@ -1961,8 +1995,15 @@ app.get('/esp/:source', async (req, res) => {
         // include any extra keys that are present on the document but not primary columns
         const extras = {};
         for (const k of Object.keys(d)) {
-          if (!['_id','timestamp','mac_address','active_power_total','power','raw','__v','createdAt','updatedAt'].includes(k)) extras[k] = d[k];
+          if (['_id','timestamp','mac_address','active_power_total','power','raw','__v','createdAt','updatedAt'].includes(k)) continue;
+          // Skip duplicate phase_* keys; normalize to active_power_a/b/c
+          if (k === 'active_power_phase_a' || k === 'active_power_phase_b' || k === 'active_power_phase_c') continue;
+          extras[k] = d[k];
         }
+        // Ensure phase A/B/C are present in the extra object as active_power_a/b/c
+        extras.active_power_a = (d.active_power_a !== undefined && d.active_power_a !== null) ? d.active_power_a : (d.active_power_phase_a !== undefined ? d.active_power_phase_a : undefined);
+        extras.active_power_b = (d.active_power_b !== undefined && d.active_power_b !== null) ? d.active_power_b : (d.active_power_phase_b !== undefined ? d.active_power_phase_b : undefined);
+        extras.active_power_c = (d.active_power_c !== undefined && d.active_power_c !== null) ? d.active_power_c : (d.active_power_phase_c !== undefined ? d.active_power_phase_c : undefined);
         if (Object.keys(extras).length) Object.assign(extra, extras);
         html += `<tr><td>${ts}</td><td>${mac}</td><td>${power}</td><td><pre>${JSON.stringify(extra,null,2)}</pre></td></tr>`;
       }
