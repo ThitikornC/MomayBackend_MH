@@ -86,8 +86,8 @@ const px_pm3250_schema = new mongoose.Schema({
 
 // ================= ESP PM models (use same electrical schema)
 // PM receivers will store the same detailed electrical measurements
-// Use a single collection `pm_doc` for all PM devices
-const PM_doc = mongoose.model('pm_doc', px_pm3250_schema);
+// Use a single collection `pm_MH` for all PM devices
+const pm_MH = mongoose.model('pm_MH', px_pm3250_schema);
 
 // Helper: create document from incoming payload using allowed fields and merge extras
 async function saveESPDoc(Model, payload) {
@@ -229,37 +229,37 @@ app.get('/', (req, res) => {
 });
 
 // ================= ESP Receivers =================
-// รับข้อมูลจาก ESP ชื่อ pm_doc
-app.post('/esp/pm_doc', async (req, res) => {
+// รับข้อมูลจาก ESP ชื่อ pm_MH
+app.post('/esp/pm_MH', async (req, res) => {
   try {
     const payload = req.body || {};
-    const doc = await saveESPDoc(PM_doc, payload);
-    console.log('💾 pm_doc saved:', doc._id);
+    const doc = await saveESPDoc(pm_MH, payload);
+    console.log('💾 pm_MH saved:', doc._id);
     res.status(201).json({ success: true, id: doc._id });
   } catch (err) {
-    console.error('❌ /esp/pm_doc error:', err);
+    console.error('❌ /esp/pm_MH error:', err);
     res.status(500).json({ error: err.message });
   }
 });
 
 // Allow PUT as an alternative to POST for devices that use HTTP PUT
-app.put('/esp/pm_doc', async (req, res) => {
+app.put('/esp/pm_MH', async (req, res) => {
   try {
     const payload = req.body || {};
-    const doc = await saveESPDoc(PM_doc, payload);
-    console.log('💾 pm_doc saved (PUT):', doc._id);
+    const doc = await saveESPDoc(pm_MH, payload);
+    console.log('💾 pm_MH saved (PUT):', doc._id);
     res.status(201).json({ success: true, id: doc._id });
   } catch (err) {
-    console.error('❌ PUT /esp/pm_doc error:', err);
+    console.error('❌ PUT /esp/pm_MH error:', err);
     res.status(500).json({ error: err.message });
   }
 });
 
-// Recent fetch endpoint for quick testing (pm_doc)
-app.get('/esp/pm_doc/recent', async (req, res) => {
+// Recent fetch endpoint for quick testing (pm_MH)
+app.get('/esp/pm_MH/recent', async (req, res) => {
   try {
     const limit = parseInt(req.query.limit) || 20;
-    const docs = await PM_doc.find().sort({ timestamp: -1 }).limit(limit).lean();
+    const docs = await pm_MH.find().sort({ timestamp: -1 }).limit(limit).lean();
     const data = docs.map(d => ({
       timestamp: d.timestamp ? new Date(d.timestamp).toISOString() : null,
       mac_address: d.mac_address || null,
@@ -269,13 +269,13 @@ app.get('/esp/pm_doc/recent', async (req, res) => {
     }));
     res.json(data);
   } catch (err) {
-    console.error('❌ GET /esp/pm_doc/recent error:', err);
+    console.error('❌ GET /esp/pm_MH/recent error:', err);
     res.status(500).json({ error: err.message });
   }
 });
 
 // GET /daily-energy
-// Returns active_power_total and timestamp from pm_doc for a given date
+// Returns active_power_total and timestamp from pm_MH for a given date
 app.get('/daily-energy', async (req, res) => {
   try {
     const queryDate = req.query.date || new Date().toISOString().slice(0,10); // YYYY-MM-DD
@@ -287,8 +287,8 @@ app.get('/daily-energy', async (req, res) => {
     const end = new Date(`${queryDate}T23:59:59Z`);
     const limit = parseInt(req.query.limit) || 10000;
 
-    // Fetch pm_doc data for the given date range
-    const docsRaw = await PM_doc.find({ timestamp: { $gte: start, $lte: end } })
+    // Fetch pm_MH data for the given date range
+    const docsRaw = await pm_MH.find({ timestamp: { $gte: start, $lte: end } })
       .sort({ timestamp: 1 })
       .limit(limit)
       .lean();
@@ -316,7 +316,7 @@ app.get('/daily-energy', async (req, res) => {
     res.json({
       date: queryDate,
       series: [
-        { label: 'pm_doc', points: pointsTotal },
+        { label: 'pm_MH', points: pointsTotal },
         { label: 'active_power_a', points: pointsA },
         { label: 'active_power_b', points: pointsB },
         { label: 'active_power_c', points: pointsC }
@@ -332,7 +332,7 @@ app.get('/daily-energy', async (req, res) => {
 // Returns { message, data: [...] } where each data item contains the schema fields
 app.get('/daily-energy/:source', async (req, res) => {
   try {
-    const source = (req.params.source || '').toLowerCase(); // e.g. pm_doc
+    const source = (req.params.source || '').toLowerCase(); // e.g. pm_MH
     const queryDate = req.query.date || new Date().toISOString().slice(0,10);
     if (!/^[a-z0-9_\-]+$/.test(source)) return res.status(400).json({ error: 'Invalid source' });
     if (!/^\d{4}-\d{2}-\d{2}$/.test(queryDate)) {
@@ -344,9 +344,9 @@ app.get('/daily-energy/:source', async (req, res) => {
     const limit = parseInt(req.query.limit) || 10000;
 
     let Model;
-    // Map source to unified pm_doc collection
-    if (source === 'pm_doc' || source === 'pm-doc' || source === 'px_pm3250') Model = PM_doc;
-    else return res.status(400).json({ error: 'Unknown source. Use pm_doc' });
+    // Map source to unified pm_MH collection
+    if (source === 'pm_MH' || source === 'pm-MH' || source === 'px_pm3250') Model = pm_MH;
+    else return res.status(400).json({ error: 'Unknown source. Use pm_MH' });
 
     const docs = await Model.find({ timestamp: { $gte: start, $lte: end } })
                           .sort({ timestamp: 1 })
@@ -409,8 +409,8 @@ app.get('/daily-energy/:source', async (req, res) => {
 });
 
 // PATCH endpoints to update a specific document by id (safe field filter)
-// Unified PATCH endpoint for pm_doc documents
-app.patch('/esp/pm_doc/:id', async (req, res) => {
+// Unified PATCH endpoint for pm_MH documents
+app.patch('/esp/pm_MH/:id', async (req, res) => {
   try {
     const id = req.params.id;
     const allowed = [
@@ -432,11 +432,11 @@ app.patch('/esp/pm_doc/:id', async (req, res) => {
     }
     if (!Object.keys(updates).length) return res.status(400).json({ error: 'No allowed fields to update' });
     if (updates.timestamp) updates.timestamp = new Date(updates.timestamp);
-    const doc = await PM_doc.findByIdAndUpdate(id, updates, { new: true });
+    const doc = await pm_MH.findByIdAndUpdate(id, updates, { new: true });
     if (!doc) return res.status(404).json({ error: 'Document not found' });
     res.json({ success: true, doc });
   } catch (err) {
-    console.error('❌ PATCH /esp/pm_doc/:id error:', err);
+    console.error('❌ PATCH /esp/pm_MH/:id error:', err);
     res.status(500).json({ error: err.message });
   }
 });
@@ -453,8 +453,8 @@ app.get('/daily-bill', async (req, res) => {
 
         const { start, end } = getDayRangeUTC(selectedDate);
 
-          // Use pm_doc and prefer active_power_total when available
-          const data = await PM_doc.find({ timestamp: { $gte: start, $lte: end } })
+          // Use pm_MH and prefer active_power_total when available
+          const data = await pm_MH.find({ timestamp: { $gte: start, $lte: end } })
             .sort({ timestamp: 1 })
             .select('active_power_total timestamp');
 
@@ -520,7 +520,7 @@ app.get('/calendar', async (req, res) => {
     const endCurrent = new Date(Date.UTC(now.getFullYear(), now.getMonth() + 1, 1));
 
     // Aggregation pipeline: group by local Thailand date and compute daily energy (kWh)
-    const agg = await PM_doc.aggregate([
+    const agg = await pm_MH.aggregate([
       {
         $match: {
           timestamp: { $gte: startPrev, $lt: endCurrent }
@@ -616,7 +616,7 @@ app.get('/daily-diff', async (req, res) => {
 
         const getDailyEnergy = async (dateStr) => {
           const { start, end } = getDayRangeUTC(dateStr);
-          const dayData = await PM_doc.find({ timestamp: { $gte: start, $lte: end } })
+          const dayData = await pm_MH.find({ timestamp: { $gte: start, $lte: end } })
                            .sort({ timestamp: 1 })
                           .select('active_power_total timestamp');
 
@@ -686,7 +686,7 @@ app.get('/hourly-bill/:date', async (req, res) => {
         const start = new Date(`${selectedDate}T00:00:00`);
         const end = new Date(`${selectedDate}T23:59:59`);
 
-        const data = await PM_doc.find({ timestamp: { $gte: start, $lte: end } })
+        const data = await pm_MH.find({ timestamp: { $gte: start, $lte: end } })
               .sort({ timestamp: 1 })
               .select('active_power_total timestamp');
 
@@ -766,7 +766,7 @@ app.get('/minute-power-range', async (req, res) => {
         if (startHour !== undefined) start.setUTCHours(Number(startHour), 0, 0, 0);
         if (endHour !== undefined) end.setUTCHours(Number(endHour), 59, 59, 999);
 
-        const data = await PM_doc.find({
+        const data = await pm_MH.find({
             timestamp: { $gte: start, $lte: end }
         }).sort({ timestamp: 1 })
           .select('timestamp active_power_total voltage current');
@@ -800,7 +800,7 @@ app.get('/hourly-summary', async (req, res) => {
 
         const { start, end } = getDayRangeUTC(date);
 
-        const data = await PM_doc.find({
+        const data = await pm_MH.find({
           timestamp: { $gte: start, $lte: end }
         }).sort({ timestamp: 1 }).select('timestamp active_power_total');
 
@@ -890,7 +890,7 @@ app.get('/solar-size', async (req, res) => {
         const start = new Date(`${date}T00:00:00Z`);
         const end = new Date(`${date}T23:59:59Z`);
 
-        const data = await PM_doc.find({
+        const data = await pm_MH.find({
           timestamp: { $gte: start, $lte: end }
         }).sort({ timestamp: 1 }).select('timestamp active_power_total');
 
@@ -993,7 +993,7 @@ app.get('/raw-local', async (req, res) => {
     const start = new Date(`${date}T08:00:00+07:00`);
     const end   = new Date(`${date}T09:00:00+07:00`);
 
-    const data = await PM_doc.find({
+    const data = await pm_MH.find({
       timestamp: { $gte: start, $lte: end }
     }).sort({ timestamp: 1 });
 
@@ -1031,7 +1031,7 @@ app.get('/raw-08-09', async (req, res) => {
     const start = new Date(`${date}T08:00:00.000Z`);
     const end = new Date(`${date}T08:59:59.999Z`);
 
-    const data = await PM_doc.find({
+    const data = await pm_MH.find({
       timestamp: { $gte: start, $lte: end }
     }).sort({ timestamp: 1 });
 
@@ -1070,7 +1070,7 @@ app.get('/diagnostics-range', async (req, res) => {
       });
     }
 
-    const data = await PM_doc.find({
+    const data = await pm_MH.find({
       timestamp: {
         $gte: new Date(start),
         $lte: new Date(end)
@@ -1220,7 +1220,7 @@ let dailyPeak = { date: '', maxPower: 0 };
 
 async function checkDailyPeak() {
   try {
-    const latest = await PM_doc.findOne().sort({ timestamp: -1 }).select('active_power_total timestamp');
+    const latest = await pm_MH.findOne().sort({ timestamp: -1 }).select('active_power_total timestamp');
     if (!latest) return;
 
     const today = new Date().toISOString().split('T')[0];
@@ -1264,7 +1264,7 @@ async function sendDailyBillNotification() {
 
     // ดึงข้อมูลจาก /daily-bill API
     const { start, end } = getDayRangeUTC(dateStr);
-    const data = await PM_doc.find({ 
+    const data = await pm_MH.find({ 
       timestamp: { $gte: start, $lte: end } 
     }).sort({ timestamp: 1 }).select('active_power_total timestamp');
 
@@ -1930,7 +1930,7 @@ app.listen(PORT, () => {
 
 // GET /daily-energy/:source
 // Example: /daily-energy/px_pm3250?date=2025-11-16
-// source can be: 'px_pm3250', 'pm_doc'
+// source can be: 'px_pm3250', 'pm_MH'
 app.get('/daily-energy/:source', async (req, res) => {
   try {
     const source = req.params.source;
@@ -1940,9 +1940,9 @@ app.get('/daily-energy/:source', async (req, res) => {
     }
 
     let Model;
-    // Map legacy and current tokens to the single pm_doc collection
-    if (source === 'px_pm3250' || source === 'pm_doc') Model = PM_doc;
-    else return res.status(400).json({ error: 'Unknown source. Use pm_doc' });
+    // Map legacy and current tokens to the single pm_MH collection
+    if (source === 'px_pm3250' || source === 'pm_MH') Model = pm_MH;
+    else return res.status(400).json({ error: 'Unknown source. Use pm_MH' });
 
     const start = new Date(`${queryDate}T00:00:00Z`);
     const end = new Date(`${queryDate}T23:59:59Z`);
@@ -1970,11 +1970,11 @@ app.get('/esp/:source', async (req, res) => {
     const source = req.params.source || '';
     const limit = Math.min(1000, parseInt(req.query.limit) || 20);
 
-    // map URL source to the unified pm_doc model
+    // map URL source to the unified pm_MH model
     const s = source.toLowerCase();
     let Model = null;
-    if (s === 'pm_doc' || s === 'pm-doc' || s === 'px_pm3250') Model = PM_doc;
-    else return res.status(404).json({ error: 'Unknown source. Use pm_doc' });
+    if (s === 'pm_MH' || s === 'pm-MH' || s === 'px_pm3250') Model = pm_MH;
+    else return res.status(404).json({ error: 'Unknown source. Use pm_MH' });
 
     const docs = await Model.find().sort({ timestamp: -1 }).limit(limit).lean();
 
