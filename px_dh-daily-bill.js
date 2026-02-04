@@ -1973,7 +1973,7 @@ app.get('/esp/:source', async (req, res) => {
     // map URL source to the unified pm_MH model
     const s = source.toLowerCase();
     let Model = null;
-    if (s === 'pm_MH' || s === 'pm-MH' || s === 'px_pm3250') Model = pm_MH;
+    if (s === 'pm_mh' || s === 'pm-mh' || s === 'px_pm3250') Model = pm_MH;
     else return res.status(404).json({ error: 'Unknown source. Use pm_MH' });
 
     const docs = await Model.find().sort({ timestamp: -1 }).limit(limit).lean();
